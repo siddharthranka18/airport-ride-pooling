@@ -1,0 +1,529 @@
+openapi: 3.0.0
+info:
+  title: Smart Airport Ride Pooling Backend API
+  description: |
+    A sophisticated ride pooling system that intelligently matches passengers traveling in similar directions to optimize costs and reduce environmental impact.
+    
+    ## Key Features
+    - **Smart Matching Algorithm**: Uses geospatial queries and DSA optimization to find optimal ride matches
+    - **Dynamic Pricing**: Real-time pricing based on distance, demand, and pool discounts
+    - **Concurrency Safety**: Optimistic locking to handle high-volume booking scenarios
+    - **Geospatial Optimization**: MongoDB 2dsphere indexes for sub-300ms query performance
+    
+    ## Business Logic
+    The system implements a sophisticated matching algorithm that considers:
+    - Passenger detour tolerance (strict time limits)
+    - Luggage capacity constraints
+    - Total travel deviation minimization
+    - Real-time supply/demand pricing
+  version: 1.0.0
+  contact:
+    name: Smart Airport Ride Pooling Team
+    email: support@smartrip.com
+
+servers:
+  - url: http://localhost:3000
+    description: Local development server
+
+tags:
+  - name: Rides
+    description: Ride booking and management endpoints
+
+paths:
+  /api/rides/book:
+    post:
+      tags:
+        - Rides
+      summary: Book a new ride with smart pooling
+      description: |
+        Books a new ride request and intelligently matches the passenger with available cabs or existing pooled rides.
+        
+        **Matching Logic:**
+        1. Uses MongoDB's $geoNear to find nearby cabs efficiently
+        2. Applies in-memory filtering for capacity and luggage constraints
+        3. Validates detour tolerance for all passengers
+        4. Minimizes total travel deviation
+        5. Implements optimistic locking for concurrency safety
+        
+        **Pricing Formula:**
+        `Final Price = (Base Fare + Distance Cost) × Surge Multiplier × Pool Discount Factor`
+      operationId: bookRide
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - userId
+                - pickupLocation
+                - dropoffLocation
+              properties:
+                userId:
+                  type: string
+                  description: MongoDB ObjectId of the user
+                  example: "507f1f77bcf86cd799439011"
+                pickupLocation:
+                  type: object
+                  description: GeoJSON Point for pickup location
+                  properties:
+                    type:
+                      type: string
+                      enum: ["Point"]
+                      default: "Point"
+                    coordinates:
+                      type: array
+                      minItems: 2
+                      maxItems: 2
+                      description: [longitude, latitude]
+                      items:
+                        type: number
+                  required: ["type", "coordinates"]
+                  example:
+                    type: "Point"
+                    coordinates: [-122.4194, 37.7749]
+                dropoffLocation:
+                  type: object
+                  description: GeoJSON Point for dropoff location
+                  properties:
+                    type:
+                      type: string
+                      enum: ["Point"]
+                      default: "Point"
+                    coordinates:
+                      type: array
+                      minItems: 2
+                      maxItems: 2
+                      description: [longitude, latitude]
+                      items:
+                        type: number
+                  required: ["type", "coordinates"]
+                  example:
+                    type: "Point"
+                    coordinates: [-122.3867, 37.6205]
+                detourTolerance:
+                  type: number
+                  minimum: 0
+                  default: 5
+                  description: Maximum acceptable detour time in minutes
+                  example: 10
+                luggageCount:
+                  type: number
+                  minimum: 0
+                  default: 0
+                  description: Number of luggage items
+                  example: 2
+      responses:
+        '200':
+          description: Ride booked successfully (pooled with existing ride)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Ride pooled successfully"
+                  data:
+                    type: object
+                    properties:
+                      rideId:
+                        type: string
+                        description: MongoDB ObjectId of the active ride
+                        example: "507f1f77bcf86cd799439012"
+                      cabId:
+                        type: string
+                        description: MongoDB ObjectId of the assigned cab
+                        example: "507f1f77bcf86cd799439013"
+                      driverName:
+                        type: string
+                        example: "Driver 1"
+                      estimatedTime:
+                        type: number
+                        description: Estimated travel time in minutes
+                        example: 15.5
+                      route:
+                        type: array
+                        description: Optimized route coordinates
+                        items:
+                          type: array
+                          minItems: 2
+                          maxItems: 2
+                          items:
+                            type: number
+                        example: [[-122.4194, 37.7749], [-122.4200, 37.7755], [-122.3867, 37.6205]]
+                      passengerCount:
+                        type: number
+                        description: Total number of passengers in the pooled ride
+                        example: 2
+                      price:
+                        type: number
+                        description: Final calculated price in USD
+                        example: 38.25
+                      pricingBreakdown:
+                        type: object
+                        properties:
+                          baseFare:
+                            type: number
+                            description: Base fare component
+                            example: 5.00
+                          distanceCost:
+                            type: number
+                            description: Distance-based cost component
+                            example: 25.00
+                          distanceKm:
+                            type: number
+                            description: Total distance in kilometers
+                            example: 10.00
+                          surgeMultiplier:
+                            type: number
+                            description: Dynamic surge multiplier (1.0 = no surge)
+                            example: 1.50
+                          poolDiscountFactor:
+                            type: number
+                            description: Pool discount factor (1.0 = no discount)
+                            example: 0.85
+                          passengerCount:
+                            type: number
+                            description: Number of passengers for discount calculation
+                            example: 2
+                      priceFormula:
+                        type: string
+                        description: Human-readable pricing formula
+                        example: "(5.00 + 25.00) × 1.50 × 0.85 = 38.25"
+                      poolDiscountApplied:
+                        type: boolean
+                        description: Whether pool discount was applied
+                        example: true
+        '201':
+          description: New ride created successfully (no existing matches)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "New ride created successfully"
+                  data:
+                    type: object
+                    properties:
+                      rideId:
+                        type: string
+                        example: "507f1f77bcf86cd799439012"
+                      cabId:
+                        type: string
+                        example: "507f1f77bcf86cd799439013"
+                      driverName:
+                        type: string
+                        example: "Driver 1"
+                      estimatedTime:
+                        type: number
+                        example: 15.5
+                      route:
+                        type: array
+                        items:
+                          type: array
+                          minItems: 2
+                          maxItems: 2
+                          items:
+                            type: number
+                        example: [[-122.4194, 37.7749], [-122.4200, 37.7755], [-122.3867, 37.6205]]
+                      price:
+                        type: number
+                        example: 42.50
+                      pricingBreakdown:
+                        type: object
+                        properties:
+                          baseFare:
+                            type: number
+                            example: 5.00
+                          distanceCost:
+                            type: number
+                            example: 25.00
+                          distanceKm:
+                            type: number
+                            example: 10.00
+                          surgeMultiplier:
+                            type: number
+                            example: 1.70
+                          poolDiscountFactor:
+                            type: number
+                            example: 1.00
+                          passengerCount:
+                            type: number
+                            example: 1
+                      priceFormula:
+                        type: string
+                        example: "(5.00 + 25.00) × 1.70 × 1.00 = 51.00"
+        '400':
+          description: Bad request - validation errors
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: "Missing required fields: userId, pickupLocation, dropoffLocation"
+                  errors:
+                    type: array
+                    items:
+                      type: string
+                    example: ["Invalid pickupLocation format"]
+        '404':
+          description: No available cabs found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: "No available cabs found"
+        '409':
+          description: Conflict - high demand or version conflict
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: "Ride booking failed due to high demand. Please try again."
+                  statusCode:
+                    type: number
+                    example: 409
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: "Internal server error during ride booking"
+
+  /api/rides/{rideId}/cancel/{userId}:
+    delete:
+      tags:
+        - Rides
+      summary: Cancel a ride booking for a specific user
+      description: |
+        Cancels a ride booking for a specific user. If the user is the last passenger in the ride,
+        the entire ride is cancelled. Otherwise, the passenger is removed and the route is recalculated.
+        
+        **Concurrency Handling:**
+        Uses optimistic locking to handle concurrent cancellation requests safely.
+      operationId: cancelRide
+      parameters:
+        - name: rideId
+          in: path
+          required: true
+          description: MongoDB ObjectId of the active ride
+          schema:
+            type: string
+          example: "507f1f77bcf86cd799439012"
+        - name: userId
+          in: path
+          required: true
+          description: MongoDB ObjectId of the user to remove
+          schema:
+            type: string
+          example: "507f1f77bcf86cd799439011"
+      responses:
+        '200':
+          description: Passenger removed successfully or ride cancelled
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Passenger removed from ride successfully"
+                  data:
+                    type: object
+                    properties:
+                      remainingPassengers:
+                        type: number
+                        description: Number of passengers remaining in the ride
+                        example: 1
+                      newRoute:
+                        type: array
+                        description: Recalculated route coordinates
+                        items:
+                          type: array
+                          minItems: 2
+                          maxItems: 2
+                          items:
+                            type: number
+                        example: [[-122.4194, 37.7749], [-122.3867, 37.6205]]
+        '400':
+          description: Bad request or ride not active
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: "Missing required parameters: rideId and userId"
+        '404':
+          description: Ride or passenger not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: "Active ride not found"
+        '409':
+          description: Version conflict during concurrent modification
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: "Ride was modified by another request. Please refresh and try again."
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: "Internal server error during ride cancellation"
+
+components:
+  schemas:
+    GeoJSONPoint:
+      type: object
+      required:
+        - type
+        - coordinates
+      properties:
+        type:
+          type: string
+          enum: ["Point"]
+          default: "Point"
+        coordinates:
+          type: array
+          minItems: 2
+          maxItems: 2
+          description: [longitude, latitude]
+          items:
+            type: number
+          example: [-122.4194, 37.7749]
+    
+    PricingBreakdown:
+      type: object
+      properties:
+        baseFare:
+          type: number
+          description: Base fare component
+          minimum: 0
+          example: 5.00
+        distanceCost:
+          type: number
+          description: Distance-based cost component
+          minimum: 0
+          example: 25.00
+        distanceKm:
+          type: number
+          description: Total distance in kilometers
+          minimum: 0
+          example: 10.00
+        surgeMultiplier:
+          type: number
+          description: Dynamic surge multiplier (1.0 = no surge)
+          minimum: 1.0
+          maximum: 3.0
+          example: 1.50
+        poolDiscountFactor:
+          type: number
+          description: Pool discount factor (1.0 = no discount, 0.5 = 50% discount)
+          minimum: 0.5
+          maximum: 1.0
+          example: 0.85
+        passengerCount:
+          type: number
+          description: Number of passengers for discount calculation
+          minimum: 1
+          example: 2
+    
+    RideResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        data:
+          type: object
+          properties:
+            rideId:
+              type: string
+            cabId:
+              type: string
+            driverName:
+              type: string
+            estimatedTime:
+              type: number
+            route:
+              type: array
+              items:
+                type: array
+                minItems: 2
+                maxItems: 2
+                items:
+                  type: number
+            passengerCount:
+              type: number
+            price:
+              type: number
+            pricingBreakdown:
+              $ref: '#/components/schemas/PricingBreakdown'
+            priceFormula:
+              type: string
+            poolDiscountApplied:
+              type: boolean
