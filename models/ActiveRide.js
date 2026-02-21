@@ -15,7 +15,6 @@ const passengerSchema = new mongoose.Schema({
     coordinates: {
       type: [Number],
       required: true,
-      // coordinates: [longitude, latitude]
       validate: {
         validator: function(coordinates) {
           return coordinates.length === 2 &&
@@ -35,7 +34,6 @@ const passengerSchema = new mongoose.Schema({
     coordinates: {
       type: [Number],
       required: true,
-      // coordinates: [longitude, latitude]
       validate: {
         validator: function(coordinates) {
           return coordinates.length === 2 &&
@@ -58,7 +56,9 @@ const activeRideSchema = new mongoose.Schema({
   cabId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Cab',
-    required: true
+    required: true,
+    // Note: 'unique' moved to the schema level index below for better partial filtering
+    index: true 
   },
   passengers: [passengerSchema],
   currentRoute: {
@@ -70,7 +70,6 @@ const activeRideSchema = new mongoose.Schema({
     coordinates: {
       type: [[Number]],
       required: true,
-      // coordinates: [[longitude, latitude], [longitude, latitude], ...]
       validate: {
         validator: function(coordinates) {
           return coordinates.every(coord => 
@@ -86,7 +85,8 @@ const activeRideSchema = new mongoose.Schema({
   status: {
     type: String,
     enum: ['active', 'completed', 'cancelled'],
-    default: 'active'
+    default: 'active',
+    index: true
   },
   totalPrice: {
     type: Number,
@@ -98,8 +98,18 @@ const activeRideSchema = new mongoose.Schema({
   optimisticConcurrency: true
 });
 
-// Add 2dsphere geospatial indexes for efficient location queries
+// CRITICAL: Geospatial indexes for the matching engine
 activeRideSchema.index({ 'passengers.pickupLocation': '2dsphere' });
-activeRideSchema.index({ 'passengers.dropoffLocation': '2dsphere' });
+
+// CRITICAL: The "Circuit Breaker" 
+// Ensures a Cab can only be in ONE 'active' ride at a time.
+// This prevents the infinite loop where multiple bots claim the same cab.
+activeRideSchema.index(
+  { cabId: 1 }, 
+  { 
+    unique: true, 
+    partialFilterExpression: { status: 'active' } 
+  }
+);
 
 module.exports = mongoose.model('ActiveRide', activeRideSchema);

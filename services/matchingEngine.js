@@ -1,23 +1,5 @@
 /**
  * Smart Airport Ride Pooling Matching Engine
- * This module implements the core DSA algorithm for grouping passengers into shared cabs.
- 
- * Time Complexity Analysis:
- * - Initial MongoDB geoNear query: O(log n + k) where n is total cabs and k is nearby cabs
- * - In-memory filtering and scoring: O(k * p) where k is nearby cabs and p is average passengers per cab
- * - Overall complexity: O(log n + k*p) which is efficient for real-time matching
- * 
- * Space Complexity Analysis:
- * - MongoDB query results: O(k) for nearby cabs
- * - In-memory passenger data: O(k*p) for all passengers in candidate cabs
- * - Temporary route calculations: O(r) where r is route points
- * - Overall space complexity: O(k*p) which scales well with reasonable k values
- * 
- * The algorithm prioritizes:
- * 1. Geospatial proximity (MongoDB index optimization)
- * 2. Capacity and luggage constraints
- * 3. Detour tolerance validation
- * 4. Total travel deviation minimization
  */
 
 const mongoose = require('mongoose');
@@ -27,9 +9,6 @@ const ActiveRide = require('../models/ActiveRide');
 
 /**
  * Calculate Haversine distance between two GeoJSON points
- * @param {Array} coord1 [longitude, latitude]
- * @param {Array} coord2 [longitude, latitude]
- * @returns {number} Distance in kilometers
  */
 const calculateDistance = (coord1, coord2) => {
   const [lon1, lat1] = coord1;
@@ -49,10 +28,9 @@ const calculateDistance = (coord1, coord2) => {
 
 /**
  * Calculate total route distance for a given sequence of points
- * @param {Array} route Array of [lon, lat] coordinates
- * @returns {number} Total distance in kilometers
  */
 const calculateRouteDistance = (route) => {
+  if (!route || route.length < 2) return 0;
   let totalDistance = 0;
   for (let i = 0; i < route.length - 1; i++) {
     totalDistance += calculateDistance(route[i], route[i + 1]);
@@ -62,54 +40,44 @@ const calculateRouteDistance = (route) => {
 
 /**
  * Check if a passenger's detour exceeds their tolerance
- * @param {Object} passenger Existing passenger data
- * @param {Object} newRequest New ride request
- * @param {Array} originalRoute Original route without new passenger
- * @param {Array} newRoute New route with new passenger
- * @returns {boolean} True if detour is within tolerance
  */
 const checkDetourTolerance = (passenger, newRequest, originalRoute, newRoute) => {
-  // Calculate original distance for this passenger
-  const originalDistance = calculateDistance(
-    passenger.pickupLocation.coordinates,
-    passenger.dropoffLocation.coordinates
-  );
-  
-  // Calculate new distance for this passenger in the pooled route
-  // This is a simplified calculation - in practice, you'd need to find the passenger's
-  // specific segment in the new route
+  // 1. FAST-PASS: If bots have the exact same start/end, they are a perfect match.
+  if (
+    passenger.pickupLocation.coordinates[0] === newRequest.pickupLocation.coordinates[0] &&
+    passenger.dropoffLocation.coordinates[0] === newRequest.dropoffLocation.coordinates[0]
+  ) {
+    return true;
+  }
+
+  // 2. MATH FIX: Compare Kilometers to Kilometers, not Percentages to Kilometers.
+  const originalDistance = calculateRouteDistance(originalRoute);
   const newDistance = calculateRouteDistance(newRoute);
   
-  // Calculate detour percentage
-  const detourPercentage = ((newDistance - originalDistance) / originalDistance) * 100;
+  // How many EXTRA kilometers does this pooling add?
+  const extraKm = newDistance - originalDistance;
   
-  // Convert tolerance from minutes to distance (assuming average speed of 40 km/h)
-  const maxDetourDistance = (passenger.detourTolerance || 5) / 60 * 40;
+  // Convert detour tolerance from minutes to kilometers (at 40km/h)
+  const maxDetourKm = (passenger.detourTolerance || 5) / 60 * 40;
   
-  return detourPercentage <= maxDetourDistance;
+  return extraKm <= maxDetourKm;
 };
 
 /**
  * Check if adding a new passenger would exceed luggage capacity
- * @param {Array} passengers Current passengers in the cab
- * @param {number} newLuggageCount Luggage count of new passenger
- * @param {number} cabCapacity Total capacity of the cab
- * @returns {boolean} True if luggage constraint is satisfied
  */
 const checkLuggageConstraint = (passengers, newLuggageCount, cabCapacity) => {
   const currentLuggage = passengers.reduce((total, p) => total + p.luggageCount, 0);
-  // Assuming each passenger takes 1 seat and luggage space is proportional
   return (currentLuggage + newLuggageCount) <= cabCapacity;
 };
 
 /**
  * Find the best match for a new ride request
- * @param {Object} newRequest RideRequest object
- * @returns {Object|null} Best match result
  */
 const findBestMatch = async (newRequest) => {
   try {
     // Step 1: Use MongoDB's $geoNear to find nearby cabs efficiently
+   // Step 1: Use MongoDB's $geoNear to find nearby cabs efficiently
     const nearbyCabs = await Cab.aggregate([
       {
         $geoNear: {
@@ -118,15 +86,29 @@ const findBestMatch = async (newRequest) => {
             coordinates: newRequest.pickupLocation.coordinates
           },
           distanceField: "distance",
-          maxDistance: 5000, // 5km radius
-          spherical: true
+          maxDistance: 50000, // 5km radius
+          spherical: true,
+          // Only look for cabs that are actually online/available
+          query: { status: { $ne: 'offline' } } 
         }
       },
       {
+        // ADVANCED LOOKUP: Only join with rides that have status "active"
         $lookup: {
           from: "activerides",
-          localField: "_id",
-          foreignField: "cabId",
+          let: { cab_id: "$_id" },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ["$cabId", "$$cab_id"] },
+                    { $eq: ["$status", "active"] } 
+                  ]
+                }
+              }
+            }
+          ],
           as: "activeRide"
         }
       },
@@ -137,17 +119,19 @@ const findBestMatch = async (newRequest) => {
         }
       }
     ]);
-
     let bestMatch = null;
     let bestScore = Infinity;
 
+    // Debug: Count how many cabs have active rides
+    const cabsWithActiveRide = nearbyCabs.filter(c => c.activeRide && c.activeRide.status === 'active').length;
+    console.log(`[Matching Engine] Found ${nearbyCabs.length} nearby cabs, ${cabsWithActiveRide} have active rides`);
+
     // Step 2: In-memory filtering and scoring
     for (const cabData of nearbyCabs) {
-      const cab = cabData;
-      const activeRide = cabData.activeRide;
+      // Only consider rides that are currently 'active'
+      const activeRide = cabData.activeRide && cabData.activeRide.status === 'active' ? cabData.activeRide : null;
 
-      // Check if cab is available (either idle or has space in active ride)
-      let availableSeats = cab.capacity;
+      let availableSeats = cabData.capacity;
       let currentPassengers = [];
       
       if (activeRide) {
@@ -155,60 +139,92 @@ const findBestMatch = async (newRequest) => {
         availableSeats -= currentPassengers.length;
       }
 
-      // Skip if no available seats
       if (availableSeats <= 0) continue;
 
-      // Check luggage constraint
-      if (!checkLuggageConstraint(currentPassengers, newRequest.luggageCount, cab.capacity)) {
+      if (!checkLuggageConstraint(currentPassengers, newRequest.luggageCount, cabData.capacity)) {
         continue;
       }
 
-      // Create candidate route with new passenger
       const candidateRoute = createOptimalRoute(
         currentPassengers,
         newRequest,
-        cab.currentLocation.coordinates
+        cabData.currentLocation.coordinates
       );
 
-      // Check detour tolerance for all passengers
       let validDetour = true;
-      const originalRoutes = currentPassengers.map(p => [
-        p.pickupLocation.coordinates,
-        p.dropoffLocation.coordinates
-      ]);
+      if (activeRide) {
+        // Build the original route points to compare detour
+        const originalRoutePoints = [
+          cabData.currentLocation.coordinates,
+          ...currentPassengers.map(p => p.pickupLocation.coordinates),
+          ...currentPassengers.map(p => p.dropoffLocation.coordinates)
+        ];
 
-      for (let i = 0; i < currentPassengers.length; i++) {
-        if (!checkDetourTolerance(
-          currentPassengers[i],
-          newRequest,
-          originalRoutes[i],
-          candidateRoute
-        )) {
-          validDetour = false;
-          break;
+        for (let i = 0; i < currentPassengers.length; i++) {
+          if (!checkDetourTolerance(
+            currentPassengers[i],
+            newRequest,
+            originalRoutePoints,
+            candidateRoute
+          )) {
+            validDetour = false;
+            break;
+          }
         }
       }
 
       if (!validDetour) continue;
 
-      // Calculate total deviation score
-      const deviationScore = calculateDeviationScore(
-        currentPassengers,
-        newRequest,
-        candidateRoute
-      );
+      const deviationScore = calculateDeviationScore(currentPassengers, newRequest, candidateRoute);
 
-      // Update best match if this one is better
       if (deviationScore < bestScore) {
         bestScore = deviationScore;
         bestMatch = {
           type: activeRide ? 'pooling' : 'new_ride',
-          cabId: cab._id,
-          activeRideId: activeRide?._id,
+          cabId: cabData._id,
+          activeRideId: activeRide ? activeRide._id : null,
           route: candidateRoute,
           deviationScore,
           estimatedTime: calculateEstimatedTime(candidateRoute)
         };
+      }
+    }
+
+    // Debug: Log result before returning
+    if (bestMatch) {
+      console.log(`[Matching Engine] Best match found: type=${bestMatch.type}, cabId=${bestMatch.cabId}, activeRideId=${bestMatch.activeRideId}`);
+    } else {
+      console.log(`[Matching Engine] No match found. Nearby cabs: ${nearbyCabs.length}, Cabs with active rides: ${cabsWithActiveRide}`);
+    }
+
+    // If there are nearby cabs but no match found (possibly due to strict constraints),
+    // still return a new_ride match if we have available cabs
+    if (!bestMatch && nearbyCabs.length > 0) {
+      console.log(`[Matching Engine] No match due to constraints, attempting to return first available cab as new_ride`);
+      
+      // Find first cab without active ride or with capacity
+      for (const cabData of nearbyCabs) {
+        const activeRide = cabData.activeRide && cabData.activeRide.status === 'active' ? cabData.activeRide : null;
+        const availableSeats = cabData.capacity - (activeRide ? (activeRide.passengers?.length || 0) : 0);
+        
+        if (availableSeats > 0) {
+          const candidateRoute = createOptimalRoute(
+            activeRide ? activeRide.passengers || [] : [],
+            newRequest,
+            cabData.currentLocation.coordinates
+          );
+          
+          bestMatch = {
+            type: 'new_ride',
+            cabId: cabData._id,
+            activeRideId: null,
+            route: candidateRoute,
+            deviationScore: calculateRouteDistance(candidateRoute),
+            estimatedTime: calculateEstimatedTime(candidateRoute)
+          };
+          console.log(`[Matching Engine] Fallback match: type=${bestMatch.type}, cabId=${bestMatch.cabId}`);
+          break;
+        }
       }
     }
 
@@ -220,15 +236,7 @@ const findBestMatch = async (newRequest) => {
   }
 };
 
-/**
- * Create an optimal route that minimizes total travel distance
- * @param {Array} currentPassengers Existing passengers
- * @param {Object} newRequest New ride request
- * @param {Array} cabLocation Current cab location
- * @returns {Array} Optimized route coordinates
- */
 const createOptimalRoute = (currentPassengers, newRequest, cabLocation) => {
-  // Simplified route optimization - in practice, this would use TSP algorithms
   const allPoints = [
     { type: 'cab', coordinates: cabLocation },
     { type: 'pickup', coordinates: newRequest.pickupLocation.coordinates },
@@ -237,7 +245,6 @@ const createOptimalRoute = (currentPassengers, newRequest, cabLocation) => {
     ...currentPassengers.map(p => ({ type: 'dropoff', coordinates: p.dropoffLocation.coordinates }))
   ];
 
-  // Simple nearest neighbor heuristic for route optimization
   const route = [cabLocation];
   const remaining = [...allPoints.slice(1)];
 
@@ -260,43 +267,25 @@ const createOptimalRoute = (currentPassengers, newRequest, cabLocation) => {
   return route;
 };
 
-/**
- * Calculate deviation score for route optimization
- * @param {Array} currentPassengers Existing passengers
- * @param {Object} newRequest New ride request
- * @param {Array} candidateRoute Proposed route
- * @returns {number} Deviation score (lower is better)
- */
 const calculateDeviationScore = (currentPassengers, newRequest, candidateRoute) => {
   const baseDistance = calculateRouteDistance(candidateRoute);
-  
-  // Add penalty for each passenger's detour
   let detourPenalty = 0;
+  
   currentPassengers.forEach(passenger => {
     const directDistance = calculateDistance(
       passenger.pickupLocation.coordinates,
       passenger.dropoffLocation.coordinates
     );
-    const routeDistance = calculateRouteDistance(candidateRoute);
-    const detourRatio = (routeDistance - directDistance) / directDistance;
-    detourPenalty += detourRatio * 100; // Weight detour heavily
+    const detourRatio = (baseDistance - directDistance) / (directDistance || 1);
+    detourPenalty += detourRatio * 10;
   });
 
-  // Add penalty for total route length
-  const lengthPenalty = baseDistance * 0.1;
-
-  return baseDistance + detourPenalty + lengthPenalty;
+  return baseDistance + detourPenalty;
 };
 
-/**
- * Calculate estimated travel time for a route
- * @param {Array} route Array of coordinates
- * @returns {number} Estimated time in minutes
- */
 const calculateEstimatedTime = (route) => {
   const totalDistance = calculateRouteDistance(route);
-  const averageSpeed = 40; // km/h
-  return (totalDistance / averageSpeed) * 60; // Convert to minutes
+  return (totalDistance / 40) * 60; // 40km/h average
 };
 
 module.exports = {

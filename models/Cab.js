@@ -40,7 +40,7 @@ const cabSchema = new mongoose.Schema({
   }
 }, {
   timestamps: true,
-  optimisticConcurrency: true
+  optimisticConcurrency: true //its solving the prblm of two passengers booking dame seat in cab it will lock it and accp tthe first request
 });
 
 // Add 2dsphere geospatial index for efficient location queries

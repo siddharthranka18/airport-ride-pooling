@@ -12,7 +12,7 @@ const rideRequestSchema = new mongoose.Schema({
       enum: ['Point'],
       required: true
     },
-    coordinates: {
+    coordinates: { 
       type: [Number],
       required: true,
       // coordinates: [longitude, latitude]
@@ -46,10 +46,10 @@ const rideRequestSchema = new mongoose.Schema({
       }
     }
   },
-  detourTolerance: {
+  detourTolerance: { //
     type: Number,
     required: true,
-    min: 0,
+    min: 0, //minimum luggage is 0
     default: 5 // minutes
   },
   luggageCount: {
