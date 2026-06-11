@@ -1,130 +1,122 @@
-# Smart Airport Ride Pooling Backend
+# ✈️ Smart Airport Ride Pooling API
 
-A sophisticated, production-ready backend system for intelligent ride pooling that optimizes passenger matching, implements dynamic pricing, and handles high-concurrency scenarios with robust error handling.
+A high-performance Node.js backend that intelligently groups airport passengers heading in similar directions into shared cabs. The system features real-time route optimization, dynamic surge pricing, and database-level concurrency protection to prevent double-booking under high load.
 
-## 🚀 Overview
+---
 
-The Smart Airport Ride Pooling Backend is a Node.js application built with Express.js and MongoDB that intelligently matches passengers traveling in similar directions. The system reduces costs for users, decreases environmental impact, and optimizes resource utilization for ride providers.
+## 📋 Table of Contents
 
-### Key Features
+- [Features](#-features)
+- [Architecture](#-architecture)
+- [Tech Stack](#-tech-stack)
+- [Getting Started](#-getting-started)
+- [API Reference](#-api-reference)
+- [System Design](#-system-design)
+- [Pricing Model](#-pricing-model)
+- [Concurrency & Race Conditions](#-concurrency--race-conditions)
+- [Stress Testing](#-stress-testing)
+- [Project Structure](#-project-structure)
 
-- **Smart Matching Algorithm**: Uses geospatial queries and DSA optimization to find optimal ride matches
-- **Dynamic Pricing**: Real-time pricing based on distance, demand, and pool discounts
-- **Concurrency Safety**: Optimistic locking to handle high-volume booking scenarios
-- **Geospatial Optimization**: MongoDB 2dsphere indexes for sub-300ms query performance
-- **Comprehensive API**: RESTful endpoints with detailed OpenAPI documentation
+---
 
-## 🛠 Tech Stack
+## ✨ Features
 
-### Backend Technologies
-- **Node.js** - JavaScript runtime environment
-- **Express.js** - Web application framework
-- **MongoDB** - NoSQL database with geospatial capabilities
-- **Mongoose** - Object Document Mapping (ODM)
-- **Morgan** - HTTP request logging middleware
+- 🤝 **Smart Ride Pooling** — Automatically groups passengers with compatible routes
+- 🗺️ **Geospatial Matching** — MongoDB `$geoNear` aggregation finds nearby cabs in one efficient DB call
+- 📐 **Route Optimization** — Nearest-neighbor greedy algorithm builds optimal multi-stop routes
+- ⏱️ **Detour Tolerance** — Respects each passenger's personal max detour threshold
+- 🧳 **Luggage Constraints** — Enforces cab luggage capacity across all pooled passengers
+- 💸 **Dynamic Pricing** — Surge multiplier based on live supply/demand + pool discount for sharing
+- 🔒 **Race-Condition Safe** — MongoDB partial unique index prevents double-booking under concurrent load
+- 🧪 **Built-in Stress Test** — Simulates 30 concurrent passengers to validate concurrency guarantees
 
-### Key Dependencies
-- **cors** - Cross-Origin Resource Sharing
-- **dotenv** - Environment variable management
-- **bcryptjs** - Password hashing (for future authentication)
-- **jsonwebtoken** - JWT token generation (for future authentication)
+---
 
-### Development Tools
-- **nodemon** - Development server with auto-restart
-- **eslint** - Code linting and formatting
-- **swagger-jsdoc** & **swagger-ui-express** - API documentation generation
+## 🏗️ Architecture
 
-## 📋 System Requirements
+```
+HTTP Request
+     │
+     ▼
+Express Server (server.js)
+     │
+     ▼
+Routes (rideRoutes.js)          /api/rides/book
+     │                          /api/rides/:rideId/cancel/:userId
+     ▼
+Controller (rideController.js)
+     │
+     ├──► Matching Engine (matchingEngine.js)   ← finds best cab / pool
+     │
+     └──► Pricing Service (pricingService.js)   ← calculates dynamic fare
+     │
+     ▼
+MongoDB via Mongoose
+  ├── User         (passenger identity)
+  ├── Cab          (vehicle fleet + GPS)
+  ├── RideRequest  (booking snapshots)
+  └── ActiveRide   (live rides with embedded passengers + route)
+```
 
-- **Node.js**: Version 14.0.0 or higher
-- **MongoDB**: Version 4.4 or higher
-- **npm**: Version 6.0.0 or higher
+---
 
-## 🚀 Quick Start
+## 🛠️ Tech Stack
 
-### 1. Installation
+| Component | Technology |
+|---|---|
+| Runtime | Node.js |
+| Web Framework | Express.js v5 |
+| Database | MongoDB |
+| ODM | Mongoose v9 |
+| Geospatial | MongoDB 2dsphere indexes + `$geoNear` |
+| HTTP Client | Axios (stress test) |
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+- Node.js >= 18
+- MongoDB running locally on port `27017`
+
+### Installation
 
 ```bash
 # Clone the repository
-git clone <repository-url>
-cd smart-airport-ride-pooling
+git clone https://github.com/your-username/airport-ride-pooling.git
+cd airport-ride-pooling
 
 # Install dependencies
 npm install
 ```
 
-### 2. Environment Setup
+### Seed the Database
 
-Create a `.env` file in the root directory:
-
-```bash
-# Database Configuration
-MONGODB_URI=mongodb://localhost:27017/airport-ride-pooling
-
-# Server Configuration
-PORT=3000
-
-# Optional: Authentication (for future implementation)
-JWT_SECRET=your-jwt-secret-key
-```
-
-### 3. Database Setup
-
-#### Option A: Local MongoDB
-1. Install MongoDB locally from [mongodb.com](https://www.mongodb.com/try/download/community)
-2. Start MongoDB service:
-   ```bash
-   # On macOS/Linux
-   mongod
-   
-   # On Windows (Command Prompt as Administrator)
-   net start MongoDB
-   ```
-
-#### Option B: MongoDB Atlas (Cloud)
-1. Create a free cluster at [mongodb.com/cloud/atlas](https://www.mongodb.com/cloud/atlas)
-2. Update `MONGODB_URI` in `.env` with your Atlas connection string
-
-### 4. Seed Database
-
-Populate the database with sample data:
+Populates 5 users and 5 cabs with random GPS coordinates near San Francisco International Airport.
 
 ```bash
-# Run the seeding script
 node seed.js
 ```
 
-This will create:
-- 5 dummy users
-- 5 dummy cabs with random locations around an airport
-- Sample ride requests and active rides
-
-### 5. Start the Server
+### Start the Server
 
 ```bash
-# Development mode (with auto-restart)
-npm run dev
-
-# Production mode
-npm start
+node server.js
+# Server running on port 3000
+# Connected to MongoDB
 ```
 
-The server will start on `http://localhost:3000`
+---
 
-### 6. Access API Documentation
+## 📡 API Reference
 
-Visit `http://localhost:3000/api-docs` to view the interactive Swagger documentation.
-
-## 📚 API Endpoints
-
-### Ride Management
-
-#### Book a Ride
-```http
+### Book a Ride
+```
 POST /api/rides/book
 ```
 
-**Request Body:**
+**Request Body**
 ```json
 {
   "userId": "507f1f77bcf86cd799439011",
@@ -137,253 +129,200 @@ POST /api/rides/book
     "coordinates": [-122.3867, 37.6205]
   },
   "detourTolerance": 10,
-  "luggageCount": 2
+  "luggageCount": 1
 }
 ```
 
-**Response:**
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `userId` | ObjectId | required | Passenger's user ID |
+| `pickupLocation` | GeoJSON Point | required | `[longitude, latitude]` |
+| `dropoffLocation` | GeoJSON Point | required | `[longitude, latitude]` |
+| `detourTolerance` | Number (min) | `5` | Max extra travel time passenger accepts |
+| `luggageCount` | Number | `0` | Number of luggage pieces |
+
+**Response — Pool Found (200)**
 ```json
 {
   "success": true,
-  "message": "Ride pooled successfully",
-  "data": {
-    "rideId": "507f1f77bcf86cd799439012",
-    "cabId": "507f1f77bcf86cd799439013",
-    "driverName": "Driver 1",
-    "estimatedTime": 15.5,
-    "route": [[-122.4194, 37.7749], [-122.4200, 37.7755], [-122.3867, 37.6205]],
-    "passengerCount": 2,
-    "price": 38.25,
-    "pricingBreakdown": {
-      "baseFare": 5.00,
-      "distanceCost": 25.00,
-      "distanceKm": 10.00,
-      "surgeMultiplier": 1.50,
-      "poolDiscountFactor": 0.85,
-      "passengerCount": 2
-    },
-    "priceFormula": "(5.00 + 25.00) × 1.50 × 0.85 = 38.25",
-    "poolDiscountApplied": true
-  }
+  "message": "Pooled successfully",
+  "rideId": "507f1f77bcf86cd799439012"
 }
 ```
 
-#### Cancel a Ride
-```http
-DELETE /api/rides/{rideId}/cancel/{userId}
-```
-
-**Response:**
+**Response — New Ride Created (201)**
 ```json
 {
   "success": true,
-  "message": "Passenger removed from ride successfully",
-  "data": {
-    "remainingPassengers": 1,
-    "newRoute": [[-122.4194, 37.7749], [-122.3867, 37.6205]]
-  }
+  "data": { "rideId": "507f1f77bcf86cd799439013" }
 }
 ```
-
-## 🔒 Concurrency Handling Strategy
-
-The system implements **Optimistic Locking** to handle high-concurrency scenarios safely:
-
-### How It Works
-
-1. **Version Tracking**: Each document has a `__v` field that increments on every update
-2. **Atomic Operations**: All critical operations are wrapped in database transactions
-3. **Conflict Detection**: MongoDB throws a `VersionError` when concurrent modifications occur
-4. **Retry Mechanism**: The system automatically retries failed operations up to 3 times
-
-### Implementation Details
-
-```javascript
-// Example of optimistic locking in action
-try {
-  await activeRide.save({ session });
-} catch (error) {
-  if (error.name === 'VersionError') {
-    // Retry the operation with updated data
-    console.log('Version conflict detected, retrying...');
-    const updatedMatch = await findBestMatch(rideRequest);
-    // Re-run the matching logic
-  }
-}
-```
-
-### Benefits
-
-- **High Performance**: No blocking locks during normal operations
-- **Scalability**: Handles thousands of concurrent requests efficiently
-- **Data Integrity**: Prevents lost updates and inconsistent states
-- **Graceful Degradation**: Returns 409 Conflict instead of system failures
-
-## 📊 Algorithm Complexity
-
-### Matching Engine Big O Analysis
-
-The core matching algorithm is optimized for real-time performance:
-
-#### **Time Complexity: O(log n + k*p)**
-
-- **O(log n)**: MongoDB's `$geoNear` query using 2dsphere indexes
-  - `n` = total number of cabs in the system
-  - Logarithmic due to B-tree index traversal
-
-- **O(k*p)**: In-memory filtering and scoring
-  - `k` = number of nearby cabs (typically small, < 50)
-  - `p` = average passengers per cab (typically < 4)
-
-#### **Space Complexity: O(k*p)**
-
-- **O(k)**: MongoDB query results for nearby cabs
-- **O(k*p)**: In-memory passenger data for all candidate cabs
-- **O(r)**: Temporary route calculations (where r = route points)
-
-### Performance Optimizations
-
-1. **Geospatial Indexing**: 2dsphere indexes ensure sub-300ms query performance
-2. **Bounded Search Radius**: Limits search to 5km radius around pickup location
-3. **Early Termination**: Skips cabs that fail capacity or constraint checks
-4. **Efficient Distance Calculation**: Haversine formula with minimal trigonometric operations
-
-### Real-World Performance
-
-- **Query Time**: < 300ms for matching operations
-- **Concurrent Users**: Supports 1000+ concurrent booking requests
-- **Database Size**: Scales to millions of ride records efficiently
-
-## 🏗 Project Structure
-
-```
-smart-airport-ride-pooling/
-├── config/
-│   └── db.js              # Database connection configuration
-├── controllers/
-│   └── rideController.js  # API endpoint handlers
-├── models/
-│   ├── User.js            # User schema
-│   ├── Cab.js             # Cab schema with geospatial indexing
-│   ├── RideRequest.js     # Ride request schema
-│   └── ActiveRide.js      # Active ride schema with optimistic locking
-├── routes/
-│   └── rideRoutes.js      # API route definitions
-├── services/
-│   ├── matchingEngine.js  # Core DSA matching algorithm
-│   └── pricingService.js  # Dynamic pricing calculations
-├── seeds/
-│   └── seed.js            # Database seeding script
-├── swagger.yaml           # OpenAPI 3.0 specification
-├── DESIGN.md              # System design documentation
-├── README.md              # This file
-├── package.json           # Project dependencies
-└── server.js              # Main application entry point
-```
-
-## 🧪 Testing
-
-### Manual Testing
-
-1. **Start the server**: `npm run dev`
-2. **Access Swagger UI**: Visit `http://localhost:3000/api-docs`
-3. **Test endpoints**: Use the interactive documentation to test API calls
-
-### Automated Testing (Future Implementation)
-
-```bash
-# Run test suite (when implemented)
-npm test
-
-# Run with coverage
-npm run test:coverage
-```
-
-## 🔧 Configuration
-
-### Environment Variables
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `MONGODB_URI` | MongoDB connection string | `mongodb://localhost:27017/airport-ride-pooling` |
-| `PORT` | Server port | `3000` |
-| `JWT_SECRET` | JWT signing secret | `your-jwt-secret-key` |
-
-### Database Configuration
-
-The system uses MongoDB with the following optimizations:
-
-- **2dsphere Indexes**: On all location fields for geospatial queries
-- **Optimistic Locking**: `__v` field for concurrency control
-- **Transactions**: ACID compliance for critical operations
-- **Validation**: Schema validation with Mongoose
-
-## 🚀 Deployment
-
-### Production Deployment
-
-1. **Environment Setup**:
-   ```bash
-   # Set production environment variables
-   export NODE_ENV=production
-   export MONGODB_URI=mongodb+srv://<username>:<password>@cluster.mongodb.net/production
-   ```
-
-2. **Build and Start**:
-   ```bash
-   # Install production dependencies
-   npm ci --only=production
-   
-   # Start the application
-   npm start
-   ```
-
-3. **Process Management**:
-   ```bash
-   # Using PM2 for production process management
-   npm install -g pm2
-   pm2 start server.js --name "ride-pooling"
-   ```
-
-### Docker Deployment (Future Implementation)
-
-```dockerfile
-# Example Dockerfile (to be implemented)
-FROM node:16-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production
-COPY . .
-EXPOSE 3000
-CMD ["npm", "start"]
-```
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature-name`
-3. Commit your changes: `git commit -m 'Add feature'`
-4. Push to the branch: `git push origin feature-name`
-5. Open a Pull Request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- **MongoDB**: For excellent geospatial query capabilities
-- **Express.js**: For robust web framework
-- **Mongoose**: For powerful ODM features
-- **OpenAPI**: For comprehensive API documentation
-
-## 📞 Support
-
-For support and questions:
-- Create an issue on GitHub
-- Email: support@smartrip.com
-- Documentation: [API Docs](http://localhost:3000/api-docs)
 
 ---
 
-**Smart Airport Ride Pooling Backend** - Making transportation smarter, greener, and more affordable. 🌱🚗💨
+### Cancel a Ride
+```
+DELETE /api/rides/:rideId/cancel/:userId
+```
+
+**Response (200)**
+```json
+{
+  "success": true,
+  "message": "Cancel logic placeholder"
+}
+```
+
+---
+
+## ⚙️ System Design
+
+### Matching Engine (`services/matchingEngine.js`)
+
+The core algorithm runs in two phases:
+
+**Phase 1 — Database Query**
+```
+$geoNear  →  find all non-offline cabs within 50km of pickup
+$lookup   →  attach each cab's current ActiveRide (if any)
+$unwind   →  flatten (keeps cabs with no active ride)
+```
+
+**Phase 2 — In-Memory Scoring**
+
+For each nearby cab:
+1. Skip if **no available seats**
+2. Skip if **luggage would overflow**
+3. Build a **candidate route** (nearest-neighbor greedy)
+4. Check **detour tolerance** for all existing passengers
+
+   ```
+   Extra km added  ≤  (detourTolerance_minutes / 60) × 40 km/h
+   ```
+
+5. Compute **deviation score** = `totalRouteDistance + detourPenalty`
+6. Track cab with **lowest score** as best match
+
+**Route Construction — Nearest-Neighbor Algorithm**
+
+```
+1. Start at cab's current GPS location
+2. Collect all pickup + dropoff points of all passengers (current + new)
+3. Repeatedly visit the nearest unvisited point
+4. Return the ordered coordinate array
+```
+
+### Haversine Distance Formula
+
+All distance calculations use the Haversine formula to compute real-world distances on Earth's spherical surface, not flat Euclidean distance.
+
+```
+d = 2R × arcsin(√(sin²(Δlat/2) + cos(lat1)cos(lat2)sin²(Δlon/2)))
+```
+
+---
+
+## 💸 Pricing Model
+
+```
+Final Price = (Base Fare + Distance Cost) × Surge Multiplier × Pool Discount Factor
+```
+
+| Variable | Value | Logic |
+|---|---|---|
+| Base Fare | $5.00 | Flat minimum |
+| Distance Rate | $2.50 / km | Haversine distance |
+| Pool Discount | 15% per extra passenger | Min floor: 50% of base |
+| Surge Floor | 1.0× | No surge |
+| Surge Ceiling | 3.0× | Caps at 3× |
+
+### Surge Pricing Trigger
+
+```
+Supply/Demand Ratio = availableCabs / pendingRequests
+
+If ratio < 0.30 (30%) → Surge = 1 + (0.30 - ratio) × 10
+```
+
+When fewer than 30% of cabs are free relative to demand, prices surge proportionally up to a 3× cap.
+
+---
+
+## 🔒 Concurrency & Race Conditions
+
+Two mechanisms guarantee correctness under concurrent load:
+
+### 1. Optimistic Concurrency Control
+Mongoose's `optimisticConcurrency: true` adds a `__v` version field to `Cab` and `ActiveRide`. Before saving, Mongoose verifies the document hasn't been modified since it was read. If it has → throws a version conflict error, preventing stale writes.
+
+### 2. MongoDB Partial Unique Index (Circuit Breaker)
+```js
+activeRideSchema.index(
+  { cabId: 1 },
+  { unique: true, partialFilterExpression: { status: 'active' } }
+);
+```
+This index enforces that **only one `ActiveRide` with `status: 'active'` can exist per cab at any time**. If two concurrent requests simultaneously try to claim the same cab, exactly one write succeeds. The second receives MongoDB error code `11000` (duplicate key), which the controller converts to HTTP `409 Conflict`.
+
+---
+
+## 🧪 Stress Testing
+
+The built-in stress test simulates 30 passengers hitting the API simultaneously:
+
+```bash
+node controllers/stressTest.js
+```
+
+**Test Flow:**
+
+| Phase | Action | Expected |
+|---|---|---|
+| Phase 1 | 1 "lead" passenger books first | ✅ Cab claimed, `ActiveRide` created |
+| *(500ms wait)* | DB indexes the new ride | — |
+| Phase 2 | 29 passengers fire concurrently | ✅ 3 pool in, 26 rejected (cab full) |
+
+**Expected output:**
+```
+✅ Successful Bookings: 4
+❌ Failed Bookings:     26
+🎉 SUCCESS: Cab capacity (4) was perfectly utilized!
+```
+
+---
+
+## 📁 Project Structure
+
+```
+airport-ride-pooling/
+├── server.js                    # Express app bootstrap + MongoDB connect
+├── seed.js                      # DB seeder (5 users, 5 cabs near SFO)
+├── package.json
+├── swagger.yaml                 # Full OpenAPI 3.0 spec
+│
+├── config/
+│   └── db.js                    # MongoDB connection helper
+│
+├── models/
+│   ├── User.js                  # Passenger schema
+│   ├── Cab.js                   # Vehicle schema + 2dsphere index
+│   ├── RideRequest.js           # Booking request + pricing breakdown
+│   └── ActiveRide.js            # Live ride + circuit breaker index
+│
+├── routes/
+│   └── rideRoutes.js            # Route definitions with JSDoc
+│
+├── controllers/
+│   ├── rideController.js        # bookRide + cancelRide handlers
+│   └── stressTest.js            # 30-passenger concurrency test
+│
+└── services/
+    ├── matchingEngine.js        # Geospatial + scoring algorithm
+    └── pricingService.js        # Surge + pool discount pricing
+```
+
+---
+
+## 📄 License
+
+ISC
